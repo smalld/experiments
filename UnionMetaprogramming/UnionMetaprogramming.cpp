@@ -4,6 +4,8 @@
 #include "stdafx.h"
 #include <memory>
 #include <vector>
+#include <typeinfo>
+#include <iostream>
 
 #if _MSC_VER >= 1900
 #define TEMPLATE template<typename> typename
@@ -432,6 +434,8 @@ struct PreprocessTrainingDataAlgorithm : LearningAlgorithmConcept<PreprocessTrai
 /*************************************************************************************
 algorithm decorator
 */
+template<TEMPLATE, TEMPLATE2>
+struct Wrap;
 
 template<typename TModel, typename TMapping, TEMPLATE2 TA1, TEMPLATE2 ... TAArgs>
 struct AlgorithmCompositionTraits {
@@ -462,7 +466,6 @@ struct AlgorithmCompositionTraits {
     using ModelInfo = typename GetModelInfo<TA1<TModel, TMapping>, TAArgs<TModel, TMapping>...>::type;
     using LearningInfo = typename GetLearningInfo<TA1<TModel, TMapping>, TAArgs<TModel, TMapping>...>::type;
 };
-
 
 template<TEMPLATE2 T1, TEMPLATE2 ...TArgs>
 struct Compose {
@@ -510,19 +513,73 @@ struct Compose {
             T1::init(*ctx);
             initImpl(linfo, arest...);
         }
+    };
 
-        /*inline static Data gatherData(Context& context, const DataFilter2& filter, Data prevpass) {
-            static_assert(false, "you have to implement this method in a subclass");
+    template<TEMPLATE TWrapper>
+    using WrapWith = Compose<typename Wrap<TWrapper, T1>::Algorithm, typename Wrap<TWrapper, TArgs>::Algorithm... >;
+};
+
+/*************************************************************************************
+*/
+template<TEMPLATE TWrapper, TEMPLATE2 TAlgorithm>
+struct Wrap {
+
+    template<typename TModel, typename TMapping>
+    struct Algorithm {
+
+        using Impl = TAlgorithm<TModel, TMapping>;
+        using ImplTraits = AlgorithmTraits <TAlgorithm, TModel, TMapping>;
+        using Model = TModel;
+        using Mapping = TMapping;
+
+        using StaticInfo = typename ImplTraits::StaticInfo;
+        using ModelInfo = typename ImplTraits::ModelInfo;
+        using LearningInfo = typename ImplTraits::LearningInfo;
+        using Data = typename ImplTraits::Data;
+        using Context = typename Impl::Context;
+
+        inline static void init(Context& linfo) {
+            TWrapper<Impl>::onInit();
+            Impl::init(linfo);
+            TWrapper<Impl>::onInit(true);
+        }
+
+        inline static Data gatherData(Context& context, const DataFilter2& filter, Data prevpass) {
+            
         }
 
         inline static void learn(Context& context, Random& rnd, Model& model, const Data& data) {
-            static_assert(false, "you have to implement this method in a subclass");
-        }*/
+            
+        }
     };
 };
 
+/*************************************************************************************
+algorithm decorator
+*/
 
+template<typename TAlgorithm>
+struct ReportStage {
+    inline static void onInit() {
+        std::cout << "initializing " << typeid(TAlgorithm).name();
+    }
 
+    inline static void onInit(bool) {
+        std::cout << "... done" << std::endl;
+    }
+};
+
+template<typename TAlgorithm>
+struct PersistStage {
+    inline static void onInit() {
+        std::cout << std::endl;
+        std::cout << "\tstoring data for " << typeid(TAlgorithm).name();
+    }
+
+    inline static void onInit(bool) {
+        std::cout << "... done" << std::endl;
+    }
+};
 
 int main()
 {
@@ -542,13 +599,16 @@ int main()
             GatherTrainingDataStatisticsAlgorithm,
             DefaultAlgorithm
         >
+#ifdef _DEBUG
+        ::WrapWith<ReportStage>
+        ::WrapWith<PersistStage>
+#endif
         ::Algorithm<Extension<Extension<TabulatedDistribution2f, int>, int>, int>;
 
     alg1::Context* ddd1 = nullptr;
     alg2::Context* ddd2 = nullptr;
     alg3::Context* ddd3 = nullptr;
     alg4::Context* ddd4 = nullptr;
-
 
     alg1 abc1;
     alg4 abc4;
