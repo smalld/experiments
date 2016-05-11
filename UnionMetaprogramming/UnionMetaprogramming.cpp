@@ -6,6 +6,7 @@
 #include <vector>
 #include <typeinfo>
 #include <iostream>
+#include <type_traits>
 
 #if _MSC_VER >= 1900
 #define TEMPLATE template<typename> typename
@@ -17,11 +18,20 @@
 #define TEMPLATE3 template<typename, typename, typename> class
 #endif
 
+//template<typename... >
+//class TupleView;
+
 template<typename Arg, typename... TArgs>
 class Tuple : public Tuple<TArgs...> {
+
 public:
     Tuple() {
         payload = std::move(std::make_unique<Arg>());
+    }
+
+    Tuple(const Arg& arg, const TArgs & ... args ) : Tuple<TArgs...>(args ...) {
+        payload = std::move(std::make_unique<Arg>());
+        *payload = arg;
     }
 
     template<typename J>
@@ -43,6 +53,25 @@ public:
     Arg* tryGet() {
         return payload.get();
     }
+
+    template<typename Arg2, typename... TArgs2>
+    void copyFrom(Tuple<Arg2, TArgs2...>& other) {
+        
+    }
+
+    template<typename Arg2>
+    void tryCopyFrom(Arg2& other) {
+        auto p = tryGet<Arg2>();
+
+        if (p) {
+            *p = other.get<Arg2>();
+        }
+    }
+
+    void fill(const Arg& arg, const TArgs & ... args) {
+        Tuple(arg, args ...);
+    }
+
 private:
     std::unique_ptr<Arg> payload;
 };
@@ -50,8 +79,19 @@ private:
 template<typename Arg>
 class Tuple<Arg> {
 public:
+    template<typename T>
+    struct contains : std::false_type {};
+
+    template<>
+    struct contains<Arg> : std::true_type {};
+
+public:
     Tuple() {
         payload = std::move(std::make_unique<Arg>());
+    }
+
+    Tuple(const Arg& data): Tuple() {
+        *payload = data;
     }
 
     template<typename J>
@@ -73,9 +113,46 @@ public:
     Arg* tryGet() {
         return payload.get();
     }
+
+    template<typename Arg2, typename... TArgs2>
+    void copyFrom(Tuple<Arg2, TArgs2...>& other) {
+
+    }
+
+    void fill(const Arg& arg) {
+        this->Tuple(arg);
+    }
+
 private:
     std::unique_ptr<Arg> payload;
 };
+
+//template<typename Arg, typename... TArgs>
+//class TupleView : public TupleView<TArgs...> {
+//public:
+//    TupleView(Tuple<Arg, TArgs...>& tuple): tuple(tuple) {
+//    }
+//
+//    Arg& get(Arg* selector = nullptr) {
+//        return tuple.get<Arg>();
+//    }
+//
+//private:
+//    Tuple<Arg, TArgs...>& tuple;
+//};
+//
+//template<typename Arg>
+//class TupleView<Arg> {
+//public:
+//    TupleView(Tuple<Arg>& tuple) : tuple(tuple) {}
+//
+//    Arg& get(Arg* selector = nullptr) {
+//        return tuple.get<Arg>();
+//    }
+//
+//private:
+//    Tuple<Arg>& tuple;
+//};
 
 template<typename T, typename TPayload>
 class Extension : public T {
@@ -165,32 +242,50 @@ private:
     std::unique_ptr<TPayload> payload;
 };
 
-template<typename T1, typename... T1Args>
-struct Union {
 
-    template<typename T2, typename... T2Args>
-    struct with {
-        using type = Tuple<T1, T1Args..., T2, T2Args... >;
-    };
+template<typename>
+struct Unwrap;
 
-    template<typename T2>
-    struct with<T2> {
-        using type = Tuple<T1, T1Args..., T2 >;
-    };
-};
+template<typename, typename ...>
+struct Join;
+
+template<typename>
+struct Union;
+
+template<typename T, typename Arg, typename... TArgs>
+struct contains : contains<T, TArgs...> {};
+
+template<typename Arg, typename... TArgs>
+struct contains<Arg, Arg, TArgs...> : std::true_type {};
+
+template<typename Arg>
+struct contains<Arg, Arg> : std::true_type {};
+
+template<typename Arg, typename T>
+struct contains<Arg, T> : std::false_type {};
 
 template<typename T1>
-struct Union<T1> {
+struct Union {
 
-    template<typename T2, typename... T2Args>
+    template<typename... T2Args>
     struct with {
-        using type = Tuple<T1, T2, T2Args... >;
+        //using type = Tuple<T1, T2, T2Args... >;
+        using type = typename std::conditional<
+            contains<T1, T2Args...>::value,  //?
+            Tuple<T2Args...>,
+            Tuple<T1, T2Args... >>::type;
     };
 
     template<typename T2>
     struct with<T2> {
-        using type = Tuple<T1, T2>;
+        //using type = Tuple<T1, T2>;
+        using type = typename std::conditional<
+            contains<T1, T2>::value,  //?
+            Tuple<T2>,
+            Tuple<T1, T2>> ::type;
     };
+
+    using type = Tuple<T1>;
 };
 
 template<typename T1>
@@ -210,24 +305,30 @@ struct Unwrap {
 };
 
 template<typename T1, typename... T1Args>
-struct Unwrap<Tuple<T1, T1Args...>> {
+struct Unwrap<Tuple<T1, T1Args...>> { //--> Tuple<T1-, T1Args- ...>
 
-    template<typename T2>
+    template<typename T2>   //--> T2+
     struct Combine {
-        using type = typename Union<T1, T1Args...>::with<T2>::type;//--> Tuple<T1, T1Args, T2>
+        using type = typename Unwrap<T1>::Combine<typename Join<T1Args..., T2>::type>::type;//--> Tuple<T1+, T1Args +..., T2+>
     };
 
-    template<typename T2, typename... T2Args>
-    struct Combine<Tuple<T2, T2Args...>> {
-        using type = typename Union<T1, T1Args...>::with<T2, T2Args...>::type; //--> Tuple<T1, T2, T2Args ....>
+    using type = typename Join<T1, T1Args...>::type;
+};
+
+
+template<typename T1>
+struct Unwrap<Tuple<T1>> {  //--> Tuple<T1->
+
+    template<typename T2>   //--> T2+
+    struct Combine {
+        using type = typename Unwrap<T1>::Combine<T2>::type;//--> Tuple<T1+, T2+>
     };
 
-    using type = Tuple<T1, T1Args...>;
+    using type = typename Join<T1>::type;//--> Tuple<T1+>
 };
 
 template<typename T1, typename... TArgs>
 struct Join {
-
     using type = typename Unwrap<T1>::Combine<typename Join<TArgs...>::type>::type;
 };
 
@@ -250,6 +351,9 @@ struct TabulatedDistribution2f {};
 
 struct Vector3{};
 
+/*************************************************************************************
+*/
+
 template<typename, typename>
 struct DefaultAlgorithm;
 
@@ -260,6 +364,44 @@ struct AlgorithmTraits {
     using ModelInfo = bool;
     using LearningInfo = bool;
 };
+
+//template<TEMPLATE2 TAlg, typename TModel, typename TMapping>
+//struct ContextData {
+//    using ImplTraits = AlgorithmTraits<TAlg, TModel, TMapping>;
+//
+//    template<typename T>
+//    using InfoType = typename Join<T>::type;
+//
+//    using StaticInfo = InfoType<typename ImplTraits::StaticInfo>;
+//    using ModelInfo = InfoType<typename ImplTraits::ModelInfo>;
+//    using LearningInfo = InfoType<typename ImplTraits::LearningInfo>;
+//
+//    ContextData(const Config& config): config(config) { }
+//public:
+//    const Config& config;
+//    StaticInfo sinfo;
+//    ModelInfo minfo;
+//    LearningInfo linfo;
+//};
+//
+//template<TEMPLATE2 TAlg, typename TModel, typename TMapping>
+//struct Context {
+//    using ImplTraits = AlgorithmTraits<TAlg, TModel, TMapping>;
+//
+//    template<typename T>
+//    using InfoViewType = typename Join<T>::type;
+//
+//    using StaticInfoView = InfoViewType<typename ImplTraits::StaticInfo>;
+//    using ModelInfoView = InfoViewType<typename ImplTraits::ModelInfo>;
+//    using LearningInfoView = InfoViewType<typename ImplTraits::LearningInfo>;
+//
+//    Context(const Config& config) : config(config) {}
+//public:
+//    const Config& config;
+//    StaticInfoView sinfo;
+//    ModelInfoView minfo;
+//    LearningInfoView linfo;
+//};
 
 /*************************************************************************************
 Defines concept of learning algorithm for a model. Includes mapping as well because
@@ -273,20 +415,23 @@ struct LearningAlgorithmConcept {
     using Model = TModel;
     using Mapping = TMapping;
 
+    template<typename T>
+    using InfoType = typename Join<T>::type;
+    /*template<typename T>
+    using InfoType = T;*/
 
-    using StaticInfo = typename ImplTraits::StaticInfo;
-    using ModelInfo = typename ImplTraits::ModelInfo;
-    using LearningInfo = typename ImplTraits::LearningInfo;
-    using Data = typename ImplTraits::Data;
-
-    /*using Scalar = typename TModel::Scalar;
-    using Vector = typename TModel::Vector;*/
+    using StaticInfo = InfoType<typename ImplTraits::StaticInfo>;
+    using ModelInfo = InfoType<typename ImplTraits::ModelInfo>;
+    using LearningInfo = InfoType<typename ImplTraits::LearningInfo>;
+    using Data = InfoType<typename ImplTraits::Data>;
 
     struct Context {
+        Context(const Config& config) : config(config) {}
+
         const Config& config;
-        StaticInfo& sinfo;
-        ModelInfo& minfo;
-        LearningInfo& linfo;
+        StaticInfo sinfo;
+        ModelInfo minfo;
+        LearningInfo linfo;
     };
 
     inline static void init(Context& linfo) {
@@ -394,7 +539,7 @@ struct TrainingDataStatistics {
 template<typename ... TParams>
 struct AlgorithmTraits<GatherTrainingDataStatisticsAlgorithm, TParams ...> {
     using Data = std::unique_ptr<std::vector<Vector3>>;
-    using StaticInfo = TrainingDataStatistics;
+    using StaticInfo = Tuple<int, TrainingDataStatistics>;
     using ModelInfo = int;
     using LearningInfo = long;
 };
@@ -403,6 +548,7 @@ template<typename TModel, typename TMapping>
 struct GatherTrainingDataStatisticsAlgorithm : LearningAlgorithmConcept<GatherTrainingDataStatisticsAlgorithm, TModel, TMapping> {
 
     inline static void init(Context& linfo) {
+        auto& stat = linfo.sinfo.get<TrainingDataStatistics>();
     }
 };
 
@@ -428,7 +574,9 @@ struct AlgorithmTraits<PreprocessTrainingDataAlgorithm, TParams ...> {
 template<typename TModel, typename TMapping>
 struct PreprocessTrainingDataAlgorithm : LearningAlgorithmConcept<PreprocessTrainingDataAlgorithm, TModel, TMapping> {
 
-    inline static void init(Context& linfo) {}
+    inline static void init(Context& linfo) {
+        linfo.sinfo.get<PreprocessParams>() = PreprocessParams();
+    }
 };
 
 /*************************************************************************************
@@ -485,10 +633,12 @@ struct Compose {
         using Data = typename ImplTraits::Data;
 
         struct Context {
+            Context(const Config& config) : config(config) {}
+
             const Config& config;
-            StaticInfo& sinfo;
-            ModelInfo& minfo;
-            LearningInfo& linfo;
+            StaticInfo sinfo;
+            ModelInfo minfo;
+            LearningInfo linfo;
         };
 
         inline static void init(Context& linfo) {
@@ -509,8 +659,12 @@ struct Compose {
 
         template<typename T1, typename... TAlgs>
         inline static void initImpl(Context& linfo, T1 a1, TAlgs... arest) {
-            T1::Context *ctx = nullptr;
-            T1::init(*ctx);
+            T1::Context ctx(linfo.config);
+            linfo.sinfo.copyFrom(ctx.sinfo);
+            linfo.minfo.copyFrom(ctx.minfo);
+            linfo.linfo.copyFrom(ctx.linfo);
+
+            T1::init(ctx);
             initImpl(linfo, arest...);
         }
     };
@@ -528,14 +682,13 @@ struct Wrap {
     struct Algorithm {
 
         using Impl = TAlgorithm<TModel, TMapping>;
-        using ImplTraits = AlgorithmTraits <TAlgorithm, TModel, TMapping>;
         using Model = TModel;
         using Mapping = TMapping;
 
-        using StaticInfo = typename ImplTraits::StaticInfo;
-        using ModelInfo = typename ImplTraits::ModelInfo;
-        using LearningInfo = typename ImplTraits::LearningInfo;
-        using Data = typename ImplTraits::Data;
+        using StaticInfo = typename Impl::StaticInfo;
+        using ModelInfo = typename Impl::ModelInfo;
+        using LearningInfo = typename Impl::LearningInfo;
+        using Data = typename Impl::Data;
         using Context = typename Impl::Context;
 
         inline static void init(Context& linfo) {
@@ -582,8 +735,11 @@ struct PersistStage {
 };
 
 int main()
-{
-    using jtype = Join<int, char, char*, Tuple<Random, int, char>, Tuple<Config, Random, int, char>>::type;
+{ 
+    using jtype = Join<int, char, char*, Tuple<Random*, int, char*>, Tuple<Tuple<Config, Random, int, char>>>::type;
+
+
+    using jtype2 = Join<Tuple<Tuple<Random, int, char>>>::type;
     using alg1 =
         DefaultAlgorithm<Extension<TabulatedDistribution2f, int>, int>;
     using alg2 =
@@ -598,24 +754,47 @@ int main()
             PreprocessTrainingDataAlgorithm,
             GatherTrainingDataStatisticsAlgorithm,
             DefaultAlgorithm
+//            ,Compose<
+//                GatherTrainingDataStatisticsAlgorithm,
+//                PreprocessTrainingDataAlgorithm>
+//#ifdef _DEBUG
+//            ::WrapWith<ReportStage>
+//            ::WrapWith<ReportStage>
+//            ::WrapWith<PersistStage>
+//#endif        
+//            ::Algorithm
         >
 #ifdef _DEBUG
+        ::WrapWith<ReportStage>
         ::WrapWith<ReportStage>
         ::WrapWith<PersistStage>
 #endif
         ::Algorithm<Extension<Extension<TabulatedDistribution2f, int>, int>, int>;
 
+    Config cfg;
     alg1::Context* ddd1 = nullptr;
     alg2::Context* ddd2 = nullptr;
     alg3::Context* ddd3 = nullptr;
-    alg4::Context* ddd4 = nullptr;
+    alg4::Context* ddd4 = new alg4::Context(cfg);
 
+    ddd4->linfo.fill(false, false);
+    ddd4->sinfo.fill(PreprocessParams(), TrainingDataStatistics(), {}, Frame{}, cfg, 0);
+    
     alg1 abc1;
     alg4 abc4;
     //abc4.gatherData()
     alg4::Data aaa;
 
     //aaa
+    //alg2::StaticInfo si;
+    alg4::ModelInfo sii;
+    alg4::Data data;
+    alg4::StaticInfo si;
+    alg4::LearningInfo li;
+    alg4::ModelInfo mi;
+
+    //ddd4->sinfo.copyTo(si);
+    //bbb.get()
 
     abc4.init(*ddd4);
 
